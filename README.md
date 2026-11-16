@@ -5,9 +5,65 @@ It is being built in three parts. Part A is done.
 
 | Part | What it does | Status |
 | --- | --- | --- |
-| A. Domain Health Checker | Grades a domain's email setup (MX, SPF, DKIM, DMARC) and lists fixes | Built, runs locally, not deployed yet |
-| B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Not started |
-| C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Not started |
+| A. Domain Health Checker | Grades a domain's email setup (MX, SPF, DKIM, DMARC) and lists fixes | Live at https://outbound-lab-plum.vercel.app |
+| B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Save, score and route built; waiting on Supabase and Anthropic keys. Salesforce and Clay next |
+| C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Not started (A/B groups are already assigned) |
+
+## Part B: the lead pipeline
+
+```
+Clay / seed script / curl
+        │  POST /api/leads   (JSON + x-api-secret header)
+        ▼
+app/api/leads/route.ts   check secret, check data
+        │
+        ▼
+lib/pipeline.ts
+  1. save to Supabase, pick A/B group at random ──► leads table
+  2. lib/score.ts: Claude scores fit 0-100,        ──► events table
+     writes a reason and a first line              (one row per step)
+  3. lib/routing.ts: pick the AE
+  4. save score, opener, owner, reasons
+        │
+        ▼
+(next) Salesforce Lead
+```
+
+| File | What it does |
+| --- | --- |
+| `supabase/schema.sql` | Creates the `leads` and `events` tables. Paste into Supabase's SQL Editor and run. |
+| `app/api/leads/route.ts` | The front door. Refuses anything without the right secret or with bad data. |
+| `lib/pipeline.ts` | Runs the steps in order and logs each one. If Claude fails, the lead is still saved and routed, marked `needs_review`. |
+| `lib/icp.ts` | The ideal customer profile in plain English. Change this to change how Claude scores. |
+| `lib/score.ts` | Calls the Claude API (`claude-opus-5-5`, low effort) and requires a JSON answer: `{score, reason, opener}`. |
+| `lib/routing.ts` | Score 80+ goes to the senior AE; everything else is round robin between the other two. |
+| `scripts/seed-leads.mjs` | Sends 25 sample leads (real brands, made-up names) through the real pipeline. |
+
+Design choices worth knowing:
+
+- **Duplicates are blocked by the database**, not just the code: the same name at the same company can only exist once, so Clay re-sending a row is harmless.
+- **The opener style depends on the A/B group.** Group A gets a social-trend hook, group B a peer-brand hook. Part C measures which gets more replies.
+- **Claude is told never to invent facts** about a company (no made-up campaigns or numbers), because a wrong "fact" in a cold email costs more than a generic line.
+- **Openers are drafts.** Nothing in this project sends email.
+
+### Setup
+
+1. Copy `.env.example` to `.env.local` and fill in the four values.
+2. Run `supabase/schema.sql` in Supabase's SQL Editor.
+3. Start the app (`npm run dev`), then in a second terminal:
+
+```bash
+node --env-file=.env.local scripts/seed-leads.mjs
+```
+
+To send one lead by hand:
+
+```bash
+curl -X POST http://localhost:3000/api/leads \
+  -H "content-type: application/json" \
+  -H "x-api-secret: YOUR_SECRET" \
+  -d '{"name":"Ana Ruiz","title":"Head of Social","company":"Glossier","domain":"glossier.com","industry":"Beauty","employee_count":250}'
+```
 
 ## Part A: how it works
 
