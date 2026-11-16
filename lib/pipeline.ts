@@ -8,8 +8,9 @@
 
 import { z } from "zod";
 import { db } from "./supabase";
-import { scoreLead, type Group } from "./score";
-import { AES, chooseOwner } from "./routing";
+import { scoreLead } from "./score";
+import { chooseOwner } from "./routing";
+import { pickGroup } from "./experiment";
 
 // What a lead must look like when it arrives (from Clay, the seed script,
 // or curl). Extra fields are ignored. Empty strings count as "not given".
@@ -43,9 +44,11 @@ async function logEvent(leadId: string, type: string, detail: Record<string, unk
 export async function processLead(input: LeadInput): Promise<PipelineResult> {
   const supabase = db();
 
-  // 1. RECEIVE AND SAVE. Random A/B group now, because the group decides
-  //    which opener style Claude writes.
-  const group: Group = Math.random() < 0.5 ? "A" : "B";
+  // 1. RECEIVE AND SAVE. Pick the A/B group now, because the group decides
+  //    which opener style Claude writes. It goes to the smaller group.
+  const groupCount = async (g: "A" | "B") =>
+    (await supabase.from("leads").select("id", { count: "exact", head: true }).eq("experiment_group", g)).count ?? 0;
+  const group = pickGroup({ A: await groupCount("A"), B: await groupCount("B") });
   const { data: lead, error } = await supabase
     .from("leads")
     .insert({
@@ -92,15 +95,12 @@ export async function processLead(input: LeadInput): Promise<PipelineResult> {
     await logEvent(lead.id, "score_failed", { error: message });
   }
 
-  // 3. ROUTE. Count how many round-robin leads each AE has right now.
-  const { data: rrRows } = await supabase
-    .from("leads")
-    .select("owner")
-    .in("owner", AES.filter((ae) => !ae.senior).map((ae) => ae.name));
-  const rrCounts: Record<string, number> = {};
-  for (const row of rrRows ?? []) rrCounts[row.owner] = (rrCounts[row.owner] ?? 0) + 1;
+  // 3. ROUTE. Count how many leads each AE owns right now.
+  const { data: ownerRows } = await supabase.from("leads").select("owner").not("owner", "is", null);
+  const counts: Record<string, number> = {};
+  for (const row of ownerRows ?? []) counts[row.owner] = (counts[row.owner] ?? 0) + 1;
 
-  const decision = chooseOwner(score, rrCounts);
+  const decision = chooseOwner(score, counts);
   Object.assign(updates, {
     owner: decision.owner,
     routing_reason: decision.reason,

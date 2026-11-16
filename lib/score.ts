@@ -13,7 +13,8 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { ICP } from "./icp";
 
-export type Group = "A" | "B";
+import type { Group } from "./experiment";
+export type { Group };
 
 export type LeadForScoring = {
   name: string;
