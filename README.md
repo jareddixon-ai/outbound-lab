@@ -19,7 +19,7 @@ app/api/leads/route.ts   check secret, check data
         │
         ▼
 lib/pipeline.ts
-  1. save to Supabase, pick A/B group at random ──► leads table
+  1. save to Supabase, put in the smaller A/B group ──► leads table
   2. lib/score.ts: Claude scores fit 0-100,        ──► events table
      writes a reason and a first line              (one row per step)
   3. lib/routing.ts: pick the AE
@@ -36,12 +36,14 @@ lib/pipeline.ts
 | `lib/pipeline.ts` | Runs the steps in order and logs each one. If Claude fails, the lead is still saved and routed, marked `needs_review`. |
 | `lib/icp.ts` | The ideal customer profile in plain English. Change this to change how Claude scores. |
 | `lib/score.ts` | Calls the Claude API (`claude-opus-5-5`, low effort) and requires a JSON answer: `{score, reason, opener}`. |
-| `lib/routing.ts` | Score 80+ goes to the senior AE; everything else is round robin between the other two. |
+| `lib/routing.ts` | Everyone gets an even share of leads, but only hot leads (80+) can go to the senior AE, who wins ties on them. |
+| `lib/experiment.ts` | Puts each new lead in whichever A/B group is smaller, so the split stays 50/50. |
 | `scripts/seed-leads.mjs` | Sends 25 sample leads (real brands, made-up names) through the real pipeline. |
 
 Design choices worth knowing:
 
 - **Duplicates are blocked by the database**, not just the code: the same name at the same company can only exist once, so Clay re-sending a row is harmless.
+- **Routing was changed after testing.** The first rule sent every 80+ lead to the senior AE. With 25 real-looking leads she got 14 and the other two got 6 each, so the rule now balances load and keeps hot leads as the only ones she can get.
 - **The opener style depends on the A/B group.** Group A gets a social-trend hook, group B a peer-brand hook. Part C measures which gets more replies.
 - **Claude is told never to invent facts** about a company (no made-up campaigns or numbers), because a wrong "fact" in a cold email costs more than a generic line.
 - **Openers are drafts.** Nothing in this project sends email.
