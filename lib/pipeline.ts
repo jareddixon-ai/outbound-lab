@@ -1,6 +1,6 @@
 // The lead pipeline: everything that happens to one lead, in order.
 //
-//   receive -> save -> Claude scores it -> route to an AE -> (Salesforce, next)
+//   receive -> save -> Claude scores it -> route to an AE -> Salesforce
 //
 // Every step writes a row to the events table, so there is always a record
 // of what happened and why. If the Claude step fails, the lead is still
@@ -11,6 +11,7 @@ import { db } from "./supabase";
 import { scoreLead } from "./score";
 import { chooseOwner } from "./routing";
 import { pickGroup } from "./experiment";
+import { createSalesforceLead, salesforceConfigured } from "./salesforce";
 
 // What a lead must look like when it arrives (from Clay, the seed script,
 // or curl). Extra fields are ignored. Empty strings count as "not given".
@@ -117,5 +118,28 @@ export async function processLead(input: LeadInput): Promise<PipelineResult> {
     .single();
   if (updateError) throw new Error(`Couldn't save the results: ${updateError.message}`);
 
-  return { status: "created", lead: finished };
+  // 5. SEND TO SALESFORCE. Skipped until the Salesforce keys are set. A
+  //    failure here doesn't lose the lead: it stays in Supabase, marked
+  //    "sync_failed", and can be sent again later.
+  if (!salesforceConfigured()) {
+    await logEvent(lead.id, "salesforce_skipped", { reason: "Salesforce keys not set" });
+    return { status: "created", lead: finished };
+  }
+  try {
+    const sfId = await createSalesforceLead(finished);
+    const { data: synced } = await supabase
+      .from("leads")
+      .update({ sf_lead_id: sfId, status: "synced" })
+      .eq("id", lead.id)
+      .select()
+      .single();
+    await logEvent(lead.id, "synced", { sf_lead_id: sfId });
+    return { status: "created", lead: synced ?? finished };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Salesforce sync failed", lead.id, message);
+    await supabase.from("leads").update({ status: "sync_failed" }).eq("id", lead.id);
+    await logEvent(lead.id, "sync_failed", { error: message });
+    return { status: "created", lead: { ...finished, status: "sync_failed" } };
+  }
 }
