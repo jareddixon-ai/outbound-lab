@@ -1,12 +1,12 @@
 # Outbound Lab
 
 A small working version of an outbound engine, built with Claude Code as a demo.
-It is being built in three parts. Part A is done.
+It is being built in three parts. Parts A and B are live.
 
 | Part | What it does | Status |
 | --- | --- | --- |
 | A. Domain Health Checker | Grades a domain's email setup (MX, SPF, DKIM, DMARC) and lists fixes | Live at https://outbound-lab-plum.vercel.app |
-| B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Save, score and route built; waiting on Supabase and Anthropic keys. Salesforce and Clay next |
+| B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Live: save, score, route and create the Salesforce Lead. Clay next |
 | C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Not started (A/B groups are already assigned) |
 
 ## Part B: the lead pipeline
@@ -24,9 +24,8 @@ lib/pipeline.ts
      writes a reason and a first line              (one row per step)
   3. lib/routing.ts: pick the AE
   4. save score, opener, owner, reasons
-        │
-        ▼
-(next) Salesforce Lead
+  5. lib/salesforce.ts: create a Salesforce Lead   ──► Salesforce
+     (score, opener, A/B group, AE in custom fields)
 ```
 
 | File | What it does |
@@ -38,6 +37,7 @@ lib/pipeline.ts
 | `lib/score.ts` | Calls the Claude API (`claude-opus-5-5`, low effort) and requires a JSON answer: `{score, reason, opener}`. |
 | `lib/routing.ts` | Everyone gets an even share of leads, but only hot leads (80+) can go to the senior AE, who wins ties on them. |
 | `lib/experiment.ts` | Puts each new lead in whichever A/B group is smaller, so the split stays 50/50. |
+| `lib/salesforce.ts` | Logs in with OAuth client credentials (no person's password) and creates the Lead. Fills `Fit_Score__c`, `Opener__c`, `Experiment_Group__c`, `Assigned_AE__c`. A failure marks the lead `sync_failed` instead of losing it. |
 | `scripts/seed-leads.mjs` | Sends 25 sample leads (real brands, made-up names) through the real pipeline. |
 
 Design choices worth knowing:
@@ -50,7 +50,7 @@ Design choices worth knowing:
 
 ### Setup
 
-1. Copy `.env.example` to `.env.local` and fill in the four values.
+1. Copy `.env.example` to `.env.local` and fill in the values (the three `SF_` values are optional; leave them empty to skip Salesforce).
 2. Run `supabase/schema.sql` in Supabase's SQL Editor.
 3. Start the app (`npm run dev`), then in a second terminal:
 
