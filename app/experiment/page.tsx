@@ -4,7 +4,6 @@
 // kept only in this browser tab (sessionStorage) and sent as a header.
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import type { GroupCounts, TestResult } from "@/lib/stats";
 
 type Lead = {
@@ -90,9 +89,7 @@ export default function Experiment() {
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-10 px-4 py-10 sm:px-6">
       <header className="flex flex-col gap-2">
-        <Link href="/" className="text-sm text-muted hover:text-foreground">
-          ← Domain Health Checker
-        </Link>
+        <p className="text-sm font-medium text-accent">Outbound Lab · Part C</p>
         <h1 className="text-3xl font-semibold tracking-tight text-balance">Opener experiment</h1>
         <p className="max-w-2xl text-muted">
           Every new lead is put in group A or B, and Claude writes its first line in that group&apos;s style. Mark the

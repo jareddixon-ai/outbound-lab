@@ -1,12 +1,13 @@
 # Outbound Lab
 
 A small working version of an outbound engine, built with Claude Code as a demo.
-It is built in three parts, all live.
+It is built in three parts, all live at https://outbound-lab-plum.vercel.app:
+the overview at `/`, then `/domain-check`, `/pipeline` and `/experiment`.
 
 | Part | What it does | Status |
 | --- | --- | --- |
-| A. Domain Health Checker | Grades a domain's email setup (MX, SPF, DKIM, DMARC) and lists fixes | Live at https://outbound-lab-plum.vercel.app |
-| B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Live: save, score, route and create the Salesforce Lead. Clay next |
+| A. Domain Health Checker | Grades a domain's email setup (MX, SPF, DKIM, DMARC) and lists fixes | Live at /domain-check |
+| B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Live; each lead's step-by-step trail at /pipeline |
 | C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Live at /experiment |
 
 ## Part B: the lead pipeline
@@ -129,7 +130,7 @@ warning half, a fail zero. The score is points earned out of points possible.
 npm run dev
 ```
 
-Then open http://localhost:3000.
+Then open http://localhost:3000 (overview), or go straight to /domain-check, /pipeline or /experiment.
 
 To test the server route by itself:
 
