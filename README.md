@@ -1,13 +1,13 @@
 # Outbound Lab
 
 A small working version of an outbound engine, built with Claude Code as a demo.
-It is being built in three parts. Parts A and B are live.
+It is built in three parts, all live.
 
 | Part | What it does | Status |
 | --- | --- | --- |
 | A. Domain Health Checker | Grades a domain's email setup (MX, SPF, DKIM, DMARC) and lists fixes | Live at https://outbound-lab-plum.vercel.app |
 | B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Live: save, score, route and create the Salesforce Lead. Clay next |
-| C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Not started (A/B groups are already assigned) |
+| C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Live at /experiment |
 
 ## Part B: the lead pipeline
 
@@ -66,6 +66,21 @@ curl -X POST http://localhost:3000/api/leads \
   -H "x-api-secret: YOUR_SECRET" \
   -d '{"name":"Ana Ruiz","title":"Head of Social","company":"Glossier","domain":"glossier.com","industry":"Beauty","employee_count":250}'
 ```
+
+## Part C: the experiment dashboard
+
+`/experiment` shows reply rates for opener style A (social-trend hook) vs B
+(peer-brand hook), a verdict, how leads are spread across AEs, and every lead
+with a Replied checkbox. Nothing here sends email, so replies are marked by
+hand; marking one needs the API secret.
+
+| File | What it does |
+| --- | --- |
+| `supabase/002_replies.sql` | Adds `replied` and `replied_at` to `leads`. Run once in the SQL Editor. |
+| `lib/stats.ts` | Two-proportion z-test, and the verdict rule: under 30 leads per group is "too early"; p < 0.05 names a winner; otherwise "no clear winner yet". |
+| `app/api/experiment/route.ts` | Read-only: leads, group counts, the test result, routing per AE. |
+| `app/api/experiment/reply/route.ts` | Marks a lead replied or not. Needs `x-api-secret`, and logs a `replied` event. |
+| `app/experiment/page.tsx` | The dashboard page. |
 
 ## Part A: how it works
 

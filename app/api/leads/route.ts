@@ -8,20 +8,11 @@
 // Without it, anyone who found the URL could fill the database with junk
 // and run up the Claude bill.
 
-import { timingSafeEqual } from "node:crypto";
+import { secretMatches } from "@/lib/auth";
 import { LeadInput, processLead } from "@/lib/pipeline";
 
 // Give the Claude step room to finish on Vercel.
 export const maxDuration = 60;
-
-function secretMatches(given: string | null): boolean {
-  const expected = process.env.LEADS_API_SECRET;
-  if (!expected || !given) return false;
-  const a = Buffer.from(given);
-  const b = Buffer.from(expected);
-  // Compare in constant time so the response speed doesn't leak the secret.
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 export async function POST(request: Request) {
   if (!process.env.LEADS_API_SECRET) {

@@ -65,7 +65,12 @@ export default function Home() {
 
   return (
     <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-12 sm:py-16">
-      <p className="text-sm font-medium text-accent">Outbound Lab · Part 1</p>
+      <p className="flex flex-wrap justify-between gap-2 text-sm font-medium">
+        <span className="text-accent">Outbound Lab · Part 1</span>
+        <a href="/experiment" className="text-muted hover:text-foreground">
+          Opener experiment →
+        </a>
+      </p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
         Domain Health Checker
       </h1>
