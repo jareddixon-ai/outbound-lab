@@ -31,20 +31,22 @@ const PARTS = [
 ];
 
 const FLOW = [
-  ["Clay", "A row is sent to /api/leads, which saves it and answers in under a second"],
-  ["Claude", "In the background: scores fit 0–100 and writes a 5-step email sequence"],
-  ["Routing", "80+ can go to any AE; the rest go to the AE with the fewest leads"],
+  ["Clay", "A row (with a signal, if there is one) is sent to /api/leads, which answers in under a second"],
+  ["Warm path", "Checked against the team's and customers' connections before anything is written"],
+  ["Claude", "Scores fit 0–100 and writes a 5-step sequence that uses the signal and the warm path"],
+  ["Routing", "A strong warm path goes to the rep who has it; otherwise load-balanced, 80+ to any AE"],
   ["Salesforce", "Created as a Lead with score, opener, group and AE"],
   ["Instantly", "Added to a campaign with its sequence; replies come back on their own"],
 ];
 
 // What changed from v1, shown at the top so the two versions are easy to compare.
 const NEW_IN_V2 = [
-  ["Background scoring", "The API answers right away; Claude, routing and syncing run after the response, with a retry worker."],
-  ["Atomic group and AE pick", "Counting and saving happen in one locked database transaction, so two leads at once can't collide."],
+  ["Warm intros first", "Before going cold, each lead is checked against reps' and customers' connections. The rep who knows them gets it; 90+ warm leads get an SDR + AE pair."],
+  ["A work queue", "One list in the order to work it: fit score, plus a timely signal, plus a warm path. Useful with one rep or ten."],
   ["Follow-up sequences", "Five emails per lead, each with its own angle: the A/B hook, the other hook, a free teardown, a category insight, a break-up."],
-  ["Instantly hand-off", "Leads with an email go into an Instantly campaign, and replies mark the lead automatically, with the step that got the reply."],
-  ["Tests and CI", "Unit tests for routing, stats, groups and sequences run on every push in GitHub Actions."],
+  ["Instantly hand-off and health", "Leads go into an Instantly campaign, replies mark themselves, and the domain page grades every sending domain and inbox."],
+  ["Experiment breakdowns", "Reply rates by title level, company size, fit score, warm vs cold and signal, plus positive replies and which step got the reply."],
+  ["Faster and safer pipeline", "The API answers in under a second and works in the background with retries; group and AE picks are atomic; 34 tests run in CI."],
 ];
 
 export default function Overview() {
@@ -99,7 +101,7 @@ export default function Overview() {
         <h2 id="flow" className="text-xl font-semibold">
           One lead&apos;s trip
         </h2>
-        <ol className="grid gap-3 sm:grid-cols-5">
+        <ol className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {FLOW.map(([where, what], i) => (
             <li key={where} className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4">
               <span className="text-xs text-muted tabular-nums">Step {i + 1}</span>

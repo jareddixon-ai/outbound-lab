@@ -24,6 +24,10 @@ type Lead = {
   sequence: SequenceStep[] | null;
   replied: boolean;
   reply_step: number | null;
+  signal: string | null;
+  priority: number | null;
+  sdr: string | null;
+  intro_note: string | null;
   created_at: string;
   events: Event[];
 };
@@ -41,6 +45,8 @@ const STEP_LABEL: Record<string, string> = {
   positive_reply: "Positive reply",
   reply_removed: "Reply removed",
   sequence_written: "Sequence written",
+  warm_path: "Warm path found",
+  paired: "SDR + AE paired",
   instantly_added: "Added to Instantly",
   instantly_skipped: "Instantly skipped",
   instantly_failed: "Instantly hand-off failed",
@@ -74,6 +80,10 @@ function describe(e: Event, lead: Lead): string {
       return `${d.owner}. ${d.reason ?? ""}`;
     case "synced":
       return `Salesforce Lead ${d.sf_lead_id}.`;
+    case "warm_path":
+      return String(d.summary ?? "");
+    case "paired":
+      return `${d.sdr} books, ${d.ae} joins from the first call.`;
     case "sequence_written":
       return `${d.steps} emails, a different angle at each step.`;
     case "instantly_added":
@@ -164,7 +174,8 @@ export default function Pipeline() {
                         </span>
                       </span>
                       <span className="text-sm text-muted">
-                        {l.owner ?? "—"} · Group {l.experiment_group ?? "—"}
+                        {l.owner ?? "—"}
+                        {l.sdr ? ` + ${l.sdr}` : ""} · Group {l.experiment_group ?? "—"}
                       </span>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[l.status] ?? "bg-unknown-bg text-unknown"}`}>
                         {l.status === "synced" ? "In Salesforce" : l.status.replace("_", " ")}
@@ -188,6 +199,23 @@ export default function Pipeline() {
                         ))}
                         {l.events.length === 0 && <li className="text-sm text-muted">No steps logged for this lead.</li>}
                       </ol>
+                    )}
+
+                    {isOpen && (l.signal || l.intro_note) && (
+                      <div className="flex flex-col gap-2 border-t border-border p-4 text-sm leading-relaxed">
+                        {l.signal && (
+                          <p>
+                            <span className="font-medium">Why now: </span>
+                            {l.signal}
+                          </p>
+                        )}
+                        {l.intro_note && (
+                          <div className="rounded-lg bg-background p-3">
+                            <p className="text-xs font-medium text-muted">Intro for the customer to forward</p>
+                            <p className="whitespace-pre-line">{l.intro_note}</p>
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     {isOpen && l.sequence && (

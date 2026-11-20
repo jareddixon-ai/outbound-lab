@@ -59,6 +59,9 @@ create index if not exists events_lead_id_idx on events (lead_id, created_at);
 alter table leads  enable row level security;
 alter table events enable row level security;
 
+-- Columns the functions below use (also re-stated in the v2.1 section).
+alter table leads add column if not exists signal text;
+
 -- v2: ATOMIC A/B ASSIGNMENT.
 -- v1 counted the groups in one query and inserted in another, so two leads
 -- arriving at once could both see "A is smaller". Here the count and the
@@ -80,9 +83,9 @@ begin
     from leads;
   g := case when a < b then 'A' when b < a then 'B' when random() < 0.5 then 'A' else 'B' end;
 
-  insert into leads (name, company, title, email, domain, industry, employee_count, source, experiment_group, status)
+  insert into leads (name, company, title, email, domain, industry, employee_count, source, signal, experiment_group, status)
   values (p->>'name', p->>'company', p->>'title', p->>'email', p->>'domain', p->>'industry',
-          (p->>'employee_count')::int, coalesce(p->>'source', 'manual'), g, 'queued')
+          (p->>'employee_count')::int, coalesce(p->>'source', 'manual'), p->>'signal', g, 'queued')
   returning * into r;
   return r;
 end $$;
@@ -120,3 +123,38 @@ revoke execute on function insert_lead(jsonb) from public, anon, authenticated;
 revoke execute on function route_lead(uuid, text[]) from public, anon, authenticated;
 grant execute on function insert_lead(jsonb) to service_role;
 grant execute on function route_lead(uuid, text[]) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- v2.1 additions: signals, warm intros, priority. Written as "add if not
+-- exists" so this whole file can be run again on a project that already has
+-- the tables above.
+-- ---------------------------------------------------------------------------
+
+-- SIGNALS: why now? A fact from Clay, like "launched a TikTok Shop in October"
+-- or "hiring a social commerce manager". Claude uses it in the opener, and it
+-- moves the lead up the work queue.
+alter table leads add column if not exists signal text;
+
+-- WARM INTROS: the best warm path found for this lead, if any.
+alter table leads add column if not exists warm_path jsonb;     -- {kind, via, owner, strength}
+alter table leads add column if not exists priority integer;     -- work-queue order, higher first
+alter table leads add column if not exists sdr text;             -- SDR paired with the AE on 90+ warm leads
+alter table leads add column if not exists intro_note text;      -- forwardable intro for a customer to send
+
+-- CONNECTIONS: who on the team (or which customer) knows whom.
+-- Filled from each rep's LinkedIn data export (Connections.csv) and from
+-- customer contacts. Only names, companies and titles: no emails, no scraping.
+create table if not exists connections (
+  id          bigint generated always as identity primary key,
+  owner       text not null,            -- the AE/SDR who knows them, or the customer's name
+  kind        text not null default 'rep' check (kind in ('rep', 'customer', 'past_champion')),
+  person_name text not null,
+  company     text not null,
+  title       text,
+  strength    integer not null default 1 check (strength between 0 and 3),
+  created_at  timestamptz not null default now()
+);
+create unique index if not exists connections_unique
+  on connections (lower(owner), lower(person_name), lower(company));
+create index if not exists connections_company_idx on connections (lower(company));
+alter table connections enable row level security;

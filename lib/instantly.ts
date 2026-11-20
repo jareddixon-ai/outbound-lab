@@ -77,3 +77,90 @@ export async function addInstantlyLead(lead: LeadForInstantly): Promise<string> 
   }
   return body.id as string;
 }
+
+// ---------------------------------------------------------------------------
+// Inbox health. Deliverability lives in the sending inboxes, not just in DNS,
+// so the domain page shows each Instantly inbox's status and warmup numbers.
+// Docs: https://developer.instantly.ai/api-reference/account/list-account
+//       https://developer.instantly.ai/api-reference/account/get-warmup-analytics
+// Needs the accounts:read scope on the API key.
+
+const ACCOUNT_STATUS: Record<number, string> = {
+  1: "Active",
+  2: "Paused",
+  3: "Paused for maintenance",
+  [-1]: "Connection error",
+  [-2]: "Soft bounce error",
+  [-3]: "Sending error",
+};
+const WARMUP_STATUS: Record<number, string> = {
+  1: "Warming",
+  0: "Warmup paused",
+  [-1]: "Banned",
+  [-2]: "Spam folder unknown",
+  [-3]: "Permanently suspended",
+};
+
+export type InboxHealth = {
+  email: string;
+  status: string;
+  healthy: boolean;
+  warmup: string;
+  dailyLimit: number | null;
+  sent: number | null;
+  inbox: number | null;
+  spam: number | null;
+  inboxRate: number | null; // landed_inbox / (landed_inbox + landed_spam)
+  healthScore: number | null;
+};
+
+async function instantly(path: string, init?: RequestInit) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${process.env.INSTANTLY_API_KEY}`,
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(`Instantly ${path} failed (${res.status}): ${body?.message ?? body?.error ?? "no details"}`);
+  return body;
+}
+
+/** Every sending inbox with its status and warmup inbox-vs-spam numbers. */
+export async function inboxHealth(): Promise<InboxHealth[]> {
+  const accounts: { email: string; status?: number; warmup_status?: number; daily_limit?: number | null }[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await instantly(`/accounts?limit=100${cursor ? `&starting_after=${encodeURIComponent(cursor)}` : ""}`);
+    accounts.push(...(page.items ?? []));
+    cursor = page.next_starting_after ?? undefined;
+  } while (cursor && accounts.length < 500);
+
+  const stats: Record<string, { sent?: number; landed_inbox?: number; landed_spam?: number; health_score?: number }> = {};
+  for (let i = 0; i < accounts.length; i += 100) {
+    const emails = accounts.slice(i, i + 100).map((a) => a.email);
+    if (!emails.length) continue;
+    const a = await instantly("/accounts/warmup-analytics", { method: "POST", body: JSON.stringify({ emails }) });
+    Object.assign(stats, a.aggregate_data ?? {});
+  }
+
+  return accounts.map((a) => {
+    const s = stats[a.email] ?? {};
+    const inbox = s.landed_inbox ?? null;
+    const spam = s.landed_spam ?? null;
+    return {
+      email: a.email,
+      status: ACCOUNT_STATUS[a.status ?? 0] ?? "Unknown",
+      healthy: a.status === 1 && a.warmup_status === 1,
+      warmup: WARMUP_STATUS[a.warmup_status ?? 99] ?? "Unknown",
+      dailyLimit: a.daily_limit ?? null,
+      sent: s.sent ?? null,
+      inbox,
+      spam,
+      inboxRate: inbox !== null && spam !== null && inbox + spam > 0 ? inbox / (inbox + spam) : null,
+      healthScore: typeof s.health_score === "number" ? s.health_score : null,
+    };
+  });
+}

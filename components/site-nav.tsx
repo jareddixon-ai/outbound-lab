@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/domain-check", label: "A · Domain check" },
   { href: "/pipeline", label: "B · Pipeline" },
   { href: "/experiment", label: "C · Experiment" },
+  { href: "/queue", label: "Work queue" },
 ];
 
 export function SiteNav() {

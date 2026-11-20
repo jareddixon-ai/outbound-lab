@@ -8,13 +8,16 @@ import { connection } from "next/server";
 import { db } from "@/lib/supabase";
 import { AES, HOT_SCORE } from "@/lib/routing";
 import { twoProportionTest, type GroupCounts } from "@/lib/stats";
+import { scoreBand, segmentTable, sizeBand, titleLevel } from "@/lib/segments";
 
 export async function GET() {
   await connection(); // always fresh: never serve a copy saved at build time
 
   const { data, error } = await db()
     .from("leads")
-    .select("id,name,title,company,score,owner,experiment_group,opener,replied,status,created_at")
+    .select(
+      "id,name,title,company,employee_count,score,owner,experiment_group,opener,replied,positive_reply,reply_step,warm_path,signal,status,created_at",
+    )
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -51,5 +54,31 @@ export async function GET() {
     };
   });
 
-  return Response.json({ leads, groups, test: twoProportionTest(groups.A, groups.B), routing, hotScore: HOT_SCORE });
+  // v2: break the result down by who the lead is, so "B wins overall" can't
+  // hide "A wins with founders". Also: do high scores really reply more, do
+  // warm leads beat cold, and which sequence step got the reply?
+  const segments = {
+    "Title level": segmentTable(leads, (l) => titleLevel(l.title)),
+    "Company size": segmentTable(leads, (l) => sizeBand(l.employee_count)),
+    "Fit score": segmentTable(leads, (l) => scoreBand(l.score)),
+    "Warm or cold": segmentTable(leads, (l) => (l.warm_path ? "Warm path" : "Cold")),
+    "Signal": segmentTable(leads, (l) => (l.signal ? "Had a signal" : "No signal")),
+  };
+  const positive = {
+    A: leads.filter((l) => l.experiment_group === "A" && l.positive_reply).length,
+    B: leads.filter((l) => l.experiment_group === "B" && l.positive_reply).length,
+  };
+  const byStep: Record<string, number> = {};
+  for (const l of leads) if (l.replied && l.reply_step) byStep[l.reply_step] = (byStep[l.reply_step] ?? 0) + 1;
+
+  return Response.json({
+    leads,
+    groups,
+    test: twoProportionTest(groups.A, groups.B),
+    routing,
+    hotScore: HOT_SCORE,
+    segments,
+    positive,
+    byStep,
+  });
 }

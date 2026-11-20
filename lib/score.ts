@@ -13,6 +13,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { ICP } from "./icp";
 import { SEQUENCE_PLAN, buildSequence, otherGroup, type SequenceStep } from "./sequence";
+import { describeWarmPath, type WarmPath } from "./warm";
 
 import type { Group } from "./experiment";
 export type { Group };
@@ -31,7 +32,11 @@ export type ScoreResult = {
   reason: string;
   opener: string;
   sequence: SequenceStep[];
+  introNote: string | null;
 };
+
+/** What else we know that should shape the emails. */
+export type ScoreContext = { signal?: string | null; warmPath?: WarmPath | null };
 
 // The exact shape Claude must reply in. v2 adds the subject line and the
 // five email bodies of the sequence (see lib/sequence.ts for each step).
@@ -45,6 +50,11 @@ const ScoreSchema = z.object({
   step3: z.string().describe("Step 3 follow-up body, under 60 words."),
   step4: z.string().describe("Step 4 follow-up body, under 60 words."),
   step5: z.string().describe("Step 5 follow-up body, under 40 words."),
+  intro_note: z
+    .string()
+    .describe(
+      "Only when the warm path is a customer intro: a forwardable note under 70 words the customer can send to introduce us. Otherwise an empty string.",
+    ),
 });
 
 const PLAN_TEXT = SEQUENCE_PLAN.map((p) => `Step ${p.step} (day ${p.day}, ${p.angle}): ${p.brief}`).join("\n");
@@ -75,6 +85,10 @@ Rules for every email you write:
   launches or news. Only use what is in the lead data and general knowledge
   of the category.
 - Use the opener style you are given for step 1, and the other style for step 2.
+- If a signal is given, it's the reason to write now: use it in step 1, in plain words.
+- If a warm path is given, step 1 opens by naming the shared connection plainly
+  (for example "Tess Alvarez suggested I reach out"), then continues in the
+  given style. Never imply a closer relationship than the strength says.
 - No sign-off or signature (the sending tool adds one) and no links.
 
 The sequence, one email per step:
@@ -91,7 +105,7 @@ function anthropic() {
   return client;
 }
 
-export async function scoreLead(lead: LeadForScoring, group: Group): Promise<ScoreResult> {
+export async function scoreLead(lead: LeadForScoring, group: Group, ctx: ScoreContext = {}): Promise<ScoreResult> {
   const leadData = {
     name: lead.name,
     title: lead.title ?? "unknown",
@@ -99,6 +113,8 @@ export async function scoreLead(lead: LeadForScoring, group: Group): Promise<Sco
     website: lead.domain ?? "unknown",
     industry: lead.industry ?? "unknown",
     employees: lead.employee_count ?? "unknown",
+    signal: ctx.signal ?? "none",
+    warm_path: ctx.warmPath ? describeWarmPath(ctx.warmPath, lead.company) : "none (cold)",
   };
 
   const response = await anthropic().beta.messages.parse({
@@ -133,5 +149,6 @@ export async function scoreLead(lead: LeadForScoring, group: Group): Promise<Sco
     reason: out.reason.trim(),
     opener: out.opener.trim(),
     sequence: buildSequence(out.subject, [out.step1, out.step2, out.step3, out.step4, out.step5]),
+    introNote: ctx.warmPath?.kind === "customer_intro" && out.intro_note.trim() ? out.intro_note.trim() : null,
   };
 }

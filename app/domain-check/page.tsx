@@ -3,7 +3,7 @@
 // to typing and clicks. It never does DNS lookups itself: it calls our server
 // route at /api/check and draws whatever comes back.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Check, Report, Status } from "@/lib/domain-check";
 
 const EXAMPLES = ["nectarsocial.com", "glossier.com", "olipop.com"];
@@ -170,6 +170,8 @@ export default function Home() {
         )}
       </div>
 
+      <SendingHealth />
+
       <section className="mt-12 border-t border-border pt-8">
         <h2 className="text-base font-semibold">Why this matters for outbound</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
@@ -221,5 +223,129 @@ function CheckCard({ check }: { check: Check }) {
         </details>
       )}
     </article>
+  );
+}
+
+// v2: the domains and inboxes we actually send from, not just one typed-in
+// domain. Grades each sending domain and shows Instantly's inbox health.
+type SendingData = {
+  configured: { domains: boolean; instantly: boolean };
+  instantlyError: string | null;
+  domains: { domain: string; grade: Report["grade"] | null; score: number | null; headline: string; inboxes: number }[];
+  inboxes: {
+    email: string;
+    status: string;
+    healthy: boolean;
+    warmup: string;
+    dailyLimit: number | null;
+    sent: number | null;
+    inboxRate: number | null;
+    healthScore: number | null;
+  }[];
+  atRisk: number;
+};
+
+function SendingHealth() {
+  const [data, setData] = useState<SendingData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/sending-health", { cache: "no-store" })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "Couldn't load sending health.");
+        setData(json);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  return (
+    <section aria-labelledby="sending" className="mt-12 border-t border-border pt-8">
+      <h2 id="sending" className="text-xl font-semibold">
+        Our sending setup
+      </h2>
+      <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+        Cold email goes out through separate sending domains and warmed-up Instantly inboxes, and that&apos;s where
+        deliverability breaks. Every sending domain is graded here, next to each inbox&apos;s warmup numbers.
+      </p>
+
+      {error && <p className="mt-4 rounded-lg bg-fail-bg p-4 text-sm text-fail">{error}</p>}
+      {!data && !error && <p className="mt-4 text-sm text-muted">Checking the sending setup…</p>}
+
+      {data && data.domains.length === 0 && (
+        <p className="mt-4 rounded-lg bg-unknown-bg p-4 text-sm text-unknown">
+          No sending domains yet. Add SENDING_DOMAINS (comma-separated) or an Instantly API key with the accounts:read
+          scope, and they&apos;ll show up here.
+        </p>
+      )}
+      {data?.instantlyError && <p className="mt-4 rounded-lg bg-warn-bg p-4 text-sm text-warn">{data.instantlyError}</p>}
+      {data && data.atRisk > 0 && (
+        <p className="mt-4 rounded-lg bg-fail-bg p-4 text-sm font-medium text-fail">
+          {data.atRisk} inbox{data.atRisk > 1 ? "es need" : " needs"} attention: not active, not warming, or landing
+          under 90% in the inbox. Pause sends from {data.atRisk > 1 ? "them" : "it"} before the experiment reads bad
+          deliverability as a bad opener.
+        </p>
+      )}
+
+      {data && data.domains.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs text-muted">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Sending domain</th>
+                <th className="py-2 pr-4 font-medium">Grade</th>
+                <th className="py-2 pr-4 font-medium">Inboxes</th>
+                <th className="py-2 font-medium">Summary</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.domains.map((d) => (
+                <tr key={d.domain} className="border-t border-border">
+                  <td className="py-2 pr-4 font-medium">{d.domain}</td>
+                  <td className="py-2 pr-4">
+                    {d.grade ? (
+                      <span className={`rounded-md px-2 py-0.5 font-semibold ${GRADE_STYLE[d.grade]}`}>{d.grade}</span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="py-2 pr-4 tabular-nums">{d.inboxes}</td>
+                  <td className="py-2 text-muted">{d.headline}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data && data.inboxes.length > 0 && (
+        <div className="mt-6 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs text-muted">
+              <tr>
+                <th className="py-2 pr-4 font-medium">Inbox</th>
+                <th className="py-2 pr-4 font-medium">Status</th>
+                <th className="py-2 pr-4 font-medium">Warmup</th>
+                <th className="py-2 pr-4 text-right font-medium">Landed in inbox</th>
+                <th className="py-2 text-right font-medium">Daily limit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.inboxes.map((i) => (
+                <tr key={i.email} className="border-t border-border">
+                  <td className="py-2 pr-4 font-mono text-xs">{i.email}</td>
+                  <td className={`py-2 pr-4 ${i.healthy ? "text-pass" : "text-fail"}`}>{i.status}</td>
+                  <td className="py-2 pr-4">{i.warmup}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums">
+                    {i.inboxRate === null ? "—" : `${Math.round(i.inboxRate * 100)}%`}
+                  </td>
+                  <td className="py-2 text-right tabular-nums">{i.dailyLimit ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

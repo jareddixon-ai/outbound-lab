@@ -11,7 +11,7 @@ export async function GET() {
   const { data, error } = await db()
     .from("leads")
     .select(
-      "id,name,title,company,source,score,score_reason,owner,routing_reason,experiment_group,status,attempts,sf_lead_id,instantly_lead_id,sequence,replied,reply_step,created_at,events(type,detail,created_at)",
+      "id,name,title,company,source,score,score_reason,owner,routing_reason,experiment_group,status,attempts,sf_lead_id,instantly_lead_id,sequence,replied,reply_step,signal,priority,sdr,intro_note,created_at,events(type,detail,created_at)",
     )
     .order("created_at", { ascending: false })
     .limit(25);

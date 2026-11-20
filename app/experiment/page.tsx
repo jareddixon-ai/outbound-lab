@@ -5,6 +5,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { GroupCounts, TestResult } from "@/lib/stats";
+import type { SegmentRow } from "@/lib/segments";
+import { SEQUENCE_PLAN } from "@/lib/sequence";
 
 type Lead = {
   id: string;
@@ -19,7 +21,16 @@ type Lead = {
   status: string;
 };
 type AeRow = { name: string; senior: boolean; leads: number; hot: number; avgScore: number | null; replies: number };
-type Data = { leads: Lead[]; groups: Record<"A" | "B", GroupCounts>; test: TestResult; routing: AeRow[]; hotScore: number };
+type Data = {
+  leads: Lead[];
+  groups: Record<"A" | "B", GroupCounts>;
+  test: TestResult;
+  routing: AeRow[];
+  hotScore: number;
+  segments: Record<string, SegmentRow[]>;
+  positive: Record<"A" | "B", number>;
+  byStep: Record<string, number>;
+};
 
 const STYLE_NAME = { A: "Social-trend hook", B: "Peer-brand hook" } as const;
 const VERDICT_STYLE = {
@@ -140,6 +151,8 @@ export default function Experiment() {
             </p>
           </section>
 
+          <Breakdowns data={data} />
+
           <section aria-labelledby="routing" className="flex flex-col gap-3">
             <h2 id="routing" className="text-lg font-semibold">
               Routing
@@ -242,5 +255,92 @@ export default function Experiment() {
         </>
       )}
     </main>
+  );
+}
+
+// v2: the same experiment, broken down. A winner overall can hide a loser in
+// a segment you care about, and positive replies matter more than all replies.
+const rate = (g: GroupCounts) => (g.leads ? pct(g.replies / g.leads) : "—");
+
+function Breakdowns({ data }: { data: Data }) {
+  const [view, setView] = useState(Object.keys(data.segments)[0]);
+  const rows = data.segments[view] ?? [];
+  const steps = Object.entries(data.byStep);
+  return (
+    <section aria-labelledby="breakdowns" className="flex flex-col gap-4">
+      <h2 id="breakdowns" className="text-lg font-semibold">
+        Breakdowns
+      </h2>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-border bg-surface p-4 text-sm">
+          <p className="font-medium">Positive replies</p>
+          <p className="mt-1 text-muted">
+            Interested or booked a meeting, as marked in Instantly. A: {data.positive.A} · B: {data.positive.B}
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-surface p-4 text-sm">
+          <p className="font-medium">Which step got the reply</p>
+          <p className="mt-1 text-muted">
+            {steps.length === 0
+              ? "No replies tied to a step yet. Instantly fills this in."
+              : steps
+                  .map(([step, n]) => `Step ${step} (${SEQUENCE_PLAN[Number(step) - 1]?.angle ?? "?"}): ${n}`)
+                  .join(" · ")}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Break down by">
+        {Object.keys(data.segments).map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={view === k}
+            onClick={() => setView(k)}
+            className={`rounded-md px-2.5 py-1 text-sm ${
+              view === k ? "bg-pass-bg font-medium text-accent" : "border border-border text-muted hover:text-foreground"
+            }`}
+          >
+            {k}
+          </button>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+        <table className="w-full text-left text-sm">
+          <thead className="text-xs text-muted">
+            <tr>
+              <th className="p-3 font-medium">{view}</th>
+              <th className="p-3 text-right font-medium">Leads</th>
+              <th className="p-3 text-right font-medium">Reply rate</th>
+              <th className="p-3 text-right font-medium">A</th>
+              <th className="p-3 text-right font-medium">B</th>
+              <th className="p-3 text-right font-medium">Positive</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.segment} className="border-t border-border">
+                <td className="p-3 font-medium">{r.segment}</td>
+                <td className="p-3 text-right tabular-nums">{r.leads}</td>
+                <td className="p-3 text-right tabular-nums">{r.leads ? pct(r.replies / r.leads) : "—"}</td>
+                <td className="p-3 text-right tabular-nums">
+                  {rate(r.A)} <span className="text-xs text-muted">({r.A.leads})</span>
+                </td>
+                <td className="p-3 text-right tabular-nums">
+                  {rate(r.B)} <span className="text-xs text-muted">({r.B.leads})</span>
+                </td>
+                <td className="p-3 text-right tabular-nums">{r.positive}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted">
+        Segments are small, so treat these as hints for the next test, not verdicts. The overall verdict above is the
+        only one with a significance test.
+      </p>
+    </section>
   );
 }

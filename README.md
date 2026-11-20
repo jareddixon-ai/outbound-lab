@@ -24,6 +24,11 @@ so v1 (branch `main`) stays exactly as it was presented.
 | 5-step follow-up sequence written by Claude in the same structured call | `lib/sequence.ts`, `lib/score.ts` |
 | Instantly hand-off (leads with an email) and a reply webhook that fills Part C | `lib/instantly.ts`, `app/api/instantly/webhook/route.ts` |
 | Unit tests (Vitest) and GitHub Actions: type check, tests, build | `tests/`, `.github/workflows/ci.yml` |
+| Warm intros: connections from LinkedIn exports and customers, best warm path per lead, routing to the rep who has it, SDR + AE pair on 90+ | `lib/warm.ts`, `app/api/connections`, `scripts/import-connections.mjs` |
+| Signals ("why now") passed to Claude and used in priority | `lib/pipeline.ts`, `lib/score.ts` |
+| Work queue: one list in the order to work it | `app/queue`, `app/api/queue` |
+| Sending health: every sending domain graded, Instantly inbox status and inbox-vs-spam | `app/api/sending-health`, `lib/instantly.ts` |
+| Experiment breakdowns: title level, company size, fit score, warm vs cold, signal, positive replies, reply step | `lib/segments.ts`, `app/experiment` |
 
 Set up a v2 environment:
 
@@ -34,6 +39,9 @@ Set up a v2 environment:
    then a webhook to `/api/instantly/webhook` for `reply_received`, `lead_interested` and
    `lead_meeting_booked`, with the header `x-webhook-secret`. Leave the campaign paused until you've
    read the drafts.
+
+Demo data for v2: `node --env-file=.env.local scripts/seed-v2.mjs <site>` loads sample
+connections and 5 sample leads (example.com emails, signals about the made-up people only).
 
 Run the tests with `npm test`.
 

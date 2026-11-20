@@ -19,6 +19,15 @@ import { createSalesforceLead, salesforceConfigured } from "./salesforce";
 import { addInstantlyLead, instantlyConfigured } from "./instantly";
 import type { Group } from "./experiment";
 import type { SequenceStep } from "./sequence";
+import {
+  bestWarmPath,
+  describeWarmPath,
+  pairSdr,
+  priority,
+  warmOwner,
+  type Connection,
+  type WarmPath,
+} from "./warm";
 
 const blank = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
 const optionalText = z.preprocess(blank, z.string().trim().max(300).optional());
@@ -36,6 +45,8 @@ export const LeadInput = z.object({
     z.number().int().nonnegative().optional(),
   ),
   source: optionalText,
+  // v2.1: why now? e.g. "Launched a TikTok Shop in October" (from Clay).
+  signal: optionalText,
 });
 export type LeadInput = z.infer<typeof LeadInput>;
 
@@ -63,6 +74,11 @@ type Lead = {
   attempts: number;
   sf_lead_id: string | null;
   instantly_lead_id: string | null;
+  signal: string | null;
+  warm_path: WarmPath | null;
+  priority: number | null;
+  sdr: string | null;
+  intro_note: string | null;
 };
 
 async function logEvent(leadId: string, type: string, detail: Record<string, unknown>) {
@@ -91,6 +107,7 @@ export async function intakeLead(input: LeadInput): Promise<IntakeResult> {
         industry: input.industry ?? null,
         employee_count: input.employee_count ?? null,
         source: input.source ?? "manual",
+        signal: input.signal ?? null,
       },
     })
     .single<Lead>();
@@ -140,15 +157,35 @@ export async function processLead(id: string): Promise<Lead | null> {
     if (error) throw new Error(`Couldn't save the lead: ${error.message}`);
   };
 
+  // WARM PATH. Does anyone on the team, or a customer, know this person or
+  // someone at the company? Checked before scoring, because it changes both
+  // the first email and who should send it.
+  if (lead.warm_path === null) {
+    const { data: rows } = await supabase
+      .from("connections")
+      .select("owner,kind,person_name,company,title,strength")
+      .ilike("company", lead.company.replace(/[\\%_]/g, "\\$&"));
+    const path = bestWarmPath(lead, (rows ?? []) as Connection[]);
+    if (path) {
+      lead.warm_path = path;
+      updates.warm_path = path;
+      await logEvent(id, "warm_path", { ...path, summary: describeWarmPath(path, lead.company) });
+    }
+  }
+
   // SCORE + SEQUENCE. Skipped if a previous attempt already did it.
   if (lead.score === null) {
     try {
-      const result = await scoreLead(lead, lead.experiment_group ?? "A");
+      const result = await scoreLead(lead, lead.experiment_group ?? "A", {
+        signal: lead.signal,
+        warmPath: lead.warm_path,
+      });
       Object.assign(updates, {
         score: result.score,
         score_reason: result.reason,
         opener: result.opener,
         sequence: result.sequence,
+        intro_note: result.introNote,
       });
       Object.assign(lead, updates);
       await logEvent(id, "scored", { score: result.score, reason: result.reason });
@@ -161,9 +198,20 @@ export async function processLead(id: string): Promise<Lead | null> {
     }
   }
 
-  // ROUTE. route_lead() picks the eligible AE with the fewest leads and saves
-  // the owner in one locked transaction.
-  if (lead.owner === null) {
+  // PRIORITY: fit score + a timely signal + a warm path. The work queue sorts by it.
+  updates.priority = priority(lead.score, lead.signal, lead.warm_path);
+
+  // ROUTE. A strong warm path goes to the rep who has the relationship.
+  // Otherwise route_lead() picks the eligible AE with the fewest leads and
+  // saves the owner in one locked transaction.
+  const viaWarm = lead.owner === null ? warmOwner(lead.warm_path) : null;
+  if (viaWarm && lead.warm_path) {
+    updates.owner = viaWarm;
+    updates.routing_reason = `Warm path: ${describeWarmPath(lead.warm_path, lead.company)} The relationship beats load balancing.`;
+    lead.owner = viaWarm;
+    lead.routing_reason = updates.routing_reason;
+    await logEvent(id, "routed", { owner: viaWarm, reason: updates.routing_reason, warm: true });
+  } else if (lead.owner === null) {
     const eligible = eligibleAes(lead.score).map((ae) => ae.name);
     const { data: routed, error } = await supabase.rpc("route_lead", { p_lead: id, p_eligible: eligible });
     if (error) {
@@ -176,6 +224,14 @@ export async function processLead(id: string): Promise<Lead | null> {
     lead.owner = owner;
     lead.routing_reason = updates.routing_reason;
     await logEvent(id, "routed", { owner, reason: updates.routing_reason });
+  }
+
+  // SDR + AE PAIR on the very best warm leads.
+  const sdr = lead.sdr ?? pairSdr(lead.score, lead.warm_path);
+  if (sdr && !lead.sdr) {
+    updates.sdr = sdr;
+    lead.sdr = sdr;
+    await logEvent(id, "paired", { sdr, ae: lead.owner, reason: "Score 90+ with a warm path: an SDR books, the AE joins from the first call." });
   }
 
   if (updates.status === "needs_review") {
