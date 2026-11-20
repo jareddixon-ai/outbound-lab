@@ -18,7 +18,7 @@ export function SiteNav() {
     <nav aria-label="Outbound Lab" className="border-b border-border bg-surface">
       <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-1 gap-y-1 px-4 py-2 sm:px-6">
         <Link href="/" className="mr-3 py-1 font-semibold tracking-tight">
-          Outbound Lab
+          Outbound Lab <span className="rounded bg-pass-bg px-1.5 py-0.5 text-xs font-medium text-accent">v2</span>
         </Link>
         {LINKS.slice(1).map((l) => {
           const active = path === l.href;

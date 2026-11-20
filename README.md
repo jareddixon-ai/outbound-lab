@@ -10,6 +10,33 @@ the overview at `/`, then `/domain-check`, `/pipeline` and `/experiment`.
 | B. Lead Pipeline | Clay to this app to Supabase to Claude (score and opener) to routing to Salesforce | Live; each lead's step-by-step trail at /pipeline |
 | C. Experiment Dashboard | A/B groups, reply rates, and whether the gap is big enough to trust | Live at /experiment |
 
+## Version 2 (branch `v2`)
+
+v2 is the same app with the top fixes from the review built in. It deploys
+from the `v2` branch to its own Vercel project and its own Supabase project,
+so v1 (branch `main`) stays exactly as it was presented.
+
+| Change | Where |
+| --- | --- |
+| Background scoring: `/api/leads` saves and answers 202 right away; scoring, routing, Salesforce and Instantly run in `after()` | `app/api/leads/route.ts`, `lib/pipeline.ts` |
+| Retry worker for queued, failed or stuck leads (3 attempts each), run daily by Vercel Cron or by hand | `app/api/worker/route.ts`, `vercel.json` |
+| Atomic A/B pick and AE pick, each in one locked Postgres transaction | `supabase/v2_schema.sql` (`insert_lead`, `route_lead`) |
+| 5-step follow-up sequence written by Claude in the same structured call | `lib/sequence.ts`, `lib/score.ts` |
+| Instantly hand-off (leads with an email) and a reply webhook that fills Part C | `lib/instantly.ts`, `app/api/instantly/webhook/route.ts` |
+| Unit tests (Vitest) and GitHub Actions: type check, tests, build | `tests/`, `.github/workflows/ci.yml` |
+
+Set up a v2 environment:
+
+1. New Supabase project, then run `supabase/v2_schema.sql` in its SQL Editor.
+2. New Vercel project from the same GitHub repo, with **Production Branch** set to `v2`.
+3. Environment variables: everything in `.env.example`, using the NEW Supabase URL and key.
+4. Optional, Instantly: create a campaign whose steps are `{{subject}}` / `{{step1}}` through `{{step5}}`,
+   then a webhook to `/api/instantly/webhook` for `reply_received`, `lead_interested` and
+   `lead_meeting_booked`, with the header `x-webhook-secret`. Leave the campaign paused until you've
+   read the drafts.
+
+Run the tests with `npm test`.
+
 ## Part B: the lead pipeline
 
 ```

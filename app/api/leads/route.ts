@@ -1,17 +1,17 @@
 // POST /api/leads: the front door for new leads.
 //
-// Clay (or the seed script, or curl) sends one lead as JSON. We check the
-// secret header, check the data, then run the pipeline: save, score with
-// Claude, route to an AE.
+// v2: this route only checks and saves the lead, then answers right away
+// with 202 ("accepted, still working"). Scoring, routing, Salesforce and
+// Instantly run after the response is sent, using next/server's after().
+// So Clay waits well under a second per row instead of about five.
 //
 // The secret header matters because this address is on the public internet.
-// Without it, anyone who found the URL could fill the database with junk
-// and run up the Claude bill.
 
+import { after } from "next/server";
 import { secretMatches } from "@/lib/auth";
-import { LeadInput, processLead } from "@/lib/pipeline";
+import { LeadInput, intakeLead, processLead } from "@/lib/pipeline";
 
-// Give the Claude step room to finish on Vercel.
+// after() runs inside this route's time budget, so give the Claude step room.
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
@@ -44,11 +44,22 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await processLead(parsed.data);
-    return Response.json(result, { status: result.status === "created" ? 201 : 200 });
+    const result = await intakeLead(parsed.data);
+    if (result.status === "queued") {
+      const id = result.lead.id as string;
+      after(async () => {
+        try {
+          await processLead(id);
+        } catch (err) {
+          // The worker (/api/worker) will pick it up again.
+          console.error("Background step failed", id, err instanceof Error ? err.message : err);
+        }
+      });
+    }
+    return Response.json(result, { status: result.status === "queued" ? 202 : 200 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("Lead pipeline failed", message);
+    console.error("Lead intake failed", message);
     return Response.json({ error: message }, { status: 500 });
   }
 }

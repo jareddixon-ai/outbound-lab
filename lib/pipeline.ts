@@ -1,20 +1,25 @@
-// The lead pipeline: everything that happens to one lead, in order.
+// The lead pipeline, v2. It's split in two:
 //
-//   receive -> save -> Claude scores it -> route to an AE -> Salesforce
+//   intakeLead()   receive -> save (A/B group picked atomically) -> "queued"
+//                  Runs inside the request, so Clay gets an answer in well
+//                  under a second.
+//   processLead()  Claude scores + writes the sequence -> route to an AE
+//                  (atomically) -> Salesforce -> Instantly
+//                  Runs after the response is sent (next/server's after()),
+//                  and again from /api/worker for anything that failed.
 //
-// Every step writes a row to the events table, so there is always a record
-// of what happened and why. If the Claude step fails, the lead is still
-// saved and routed, and marked "needs_review" instead of being lost.
+// Every step writes a row to the events table. processLead() only does the
+// steps that haven't happened yet, so running it twice is safe.
 
 import { z } from "zod";
 import { db } from "./supabase";
 import { scoreLead } from "./score";
-import { chooseOwner } from "./routing";
-import { pickGroup } from "./experiment";
+import { eligibleAes, explainRouting } from "./routing";
 import { createSalesforceLead, salesforceConfigured } from "./salesforce";
+import { addInstantlyLead, instantlyConfigured } from "./instantly";
+import type { Group } from "./experiment";
+import type { SequenceStep } from "./sequence";
 
-// What a lead must look like when it arrives (from Clay, the seed script,
-// or curl). Extra fields are ignored. Empty strings count as "not given".
 const blank = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
 const optionalText = z.preprocess(blank, z.string().trim().max(300).optional());
 
@@ -22,6 +27,8 @@ export const LeadInput = z.object({
   name: z.string().trim().min(1, "name is required").max(200),
   company: z.string().trim().min(1, "company is required").max(200),
   title: optionalText,
+  // v2: optional, but Instantly needs it to add the lead to a campaign.
+  email: z.preprocess(blank, z.email("email must be a valid address").max(320).optional()),
   domain: optionalText,
   industry: optionalText,
   employee_count: z.preprocess(
@@ -32,9 +39,30 @@ export const LeadInput = z.object({
 });
 export type LeadInput = z.infer<typeof LeadInput>;
 
-export type PipelineResult = {
-  status: "created" | "duplicate";
-  lead: Record<string, unknown>;
+/** A background attempt gives up after this many tries and waits for a person. */
+export const MAX_ATTEMPTS = 3;
+
+type Lead = {
+  id: string;
+  name: string;
+  title: string | null;
+  company: string;
+  email: string | null;
+  domain: string | null;
+  industry: string | null;
+  employee_count: number | null;
+  source: string;
+  score: number | null;
+  score_reason: string | null;
+  opener: string | null;
+  sequence: SequenceStep[] | null;
+  owner: string | null;
+  routing_reason: string | null;
+  experiment_group: Group | null;
+  status: string;
+  attempts: number;
+  sf_lead_id: string | null;
+  instantly_lead_id: string | null;
 };
 
 async function logEvent(leadId: string, type: string, detail: Record<string, unknown>) {
@@ -42,33 +70,34 @@ async function logEvent(leadId: string, type: string, detail: Record<string, unk
   if (error) console.error("Couldn't log event", type, error.message);
 }
 
-export async function processLead(input: LeadInput): Promise<PipelineResult> {
+const cleanDomain = (d?: string) =>
+  d?.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] ?? null;
+
+export type IntakeResult = { status: "queued" | "duplicate"; lead: Record<string, unknown> };
+
+/** Step 1: save the lead. Fast, so it runs inside the request. */
+export async function intakeLead(input: LeadInput): Promise<IntakeResult> {
   const supabase = db();
 
-  // 1. RECEIVE AND SAVE. Pick the A/B group now, because the group decides
-  //    which opener style Claude writes. It goes to the smaller group.
-  const groupCount = async (g: "A" | "B") =>
-    (await supabase.from("leads").select("id", { count: "exact", head: true }).eq("experiment_group", g)).count ?? 0;
-  const group = pickGroup({ A: await groupCount("A"), B: await groupCount("B") });
+  // insert_lead() picks the A/B group and inserts in one locked transaction.
   const { data: lead, error } = await supabase
-    .from("leads")
-    .insert({
-      name: input.name,
-      company: input.company,
-      title: input.title ?? null,
-      domain: input.domain?.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] ?? null,
-      industry: input.industry ?? null,
-      employee_count: input.employee_count ?? null,
-      source: input.source ?? "manual",
-      experiment_group: group,
+    .rpc("insert_lead", {
+      p: {
+        name: input.name,
+        company: input.company,
+        title: input.title ?? null,
+        email: input.email?.toLowerCase() ?? null,
+        domain: cleanDomain(input.domain),
+        industry: input.industry ?? null,
+        employee_count: input.employee_count ?? null,
+        source: input.source ?? "manual",
+      },
     })
-    .select()
-    .single();
+    .single<Lead>();
 
   if (error) {
-    // 23505 is the database's code for "this would create a duplicate".
+    // 23505 = "this would create a duplicate" (same name at the same company).
     if (error.code === "23505") {
-      // ilike = case-insensitive match. Escape % and _ so they're read literally.
       const exact = (s: string) => s.replace(/[\\%_]/g, "\\$&");
       const { data: existing } = await supabase
         .from("leads")
@@ -80,66 +109,138 @@ export async function processLead(input: LeadInput): Promise<PipelineResult> {
     }
     throw new Error(`Couldn't save the lead: ${error.message}`);
   }
-  await logEvent(lead.id, "received", { source: lead.source, experiment_group: group });
 
-  // 2. SCORE WITH CLAUDE. A failure here shouldn't lose the lead.
-  let score: number | null = null;
-  const updates: Record<string, unknown> = {};
-  try {
-    const result = await scoreLead(lead, group);
-    score = result.score;
-    Object.assign(updates, { score, score_reason: result.reason, opener: result.opener });
-    await logEvent(lead.id, "scored", { score, reason: result.reason });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Scoring failed", lead.id, message);
-    await logEvent(lead.id, "score_failed", { error: message });
-  }
+  await logEvent(lead.id, "received", { source: lead.source, experiment_group: lead.experiment_group });
+  return { status: "queued", lead };
+}
 
-  // 3. ROUTE. Count how many leads each AE owns right now.
-  const { data: ownerRows } = await supabase.from("leads").select("owner").not("owner", "is", null);
-  const counts: Record<string, number> = {};
-  for (const row of ownerRows ?? []) counts[row.owner] = (counts[row.owner] ?? 0) + 1;
+/**
+ * Step 2: everything slow. Claims the lead first (status -> processing) so
+ * the after() call and the worker can't both work on it at once.
+ */
+export async function processLead(id: string): Promise<Lead | null> {
+  const supabase = db();
 
-  const decision = chooseOwner(score, counts);
-  Object.assign(updates, {
-    owner: decision.owner,
-    routing_reason: decision.reason,
-    status: score === null ? "needs_review" : "routed",
-  });
-  await logEvent(lead.id, "routed", { owner: decision.owner, reason: decision.reason });
-
-  // 4. SAVE THE RESULTS.
-  const { data: finished, error: updateError } = await supabase
+  // A lead stuck in "processing" for 2+ minutes means an earlier run died
+  // (a timeout, say), so it can be claimed again.
+  const stale = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  const { data: claimed } = await supabase
     .from("leads")
-    .update(updates)
-    .eq("id", lead.id)
+    .update({ status: "processing", last_attempt_at: new Date().toISOString() })
+    .eq("id", id)
+    .or(`status.in.(queued,needs_review,sync_failed),and(status.eq.processing,last_attempt_at.lt.${stale})`)
     .select()
-    .single();
-  if (updateError) throw new Error(`Couldn't save the results: ${updateError.message}`);
+    .maybeSingle<Lead>();
+  if (!claimed) return null; // someone else has it, or there's nothing to do
 
-  // 5. SEND TO SALESFORCE. Skipped until the Salesforce keys are set. A
-  //    failure here doesn't lose the lead: it stays in Supabase, marked
-  //    "sync_failed", and can be sent again later.
-  if (!salesforceConfigured()) {
-    await logEvent(lead.id, "salesforce_skipped", { reason: "Salesforce keys not set" });
-    return { status: "created", lead: finished };
+  const lead = claimed;
+  const updates: Partial<Lead> = { attempts: lead.attempts + 1 };
+  const save = async (fields: Partial<Lead> & { last_error?: string | null }) => {
+    const { error } = await supabase.from("leads").update(fields).eq("id", id);
+    if (error) throw new Error(`Couldn't save the lead: ${error.message}`);
+  };
+
+  // SCORE + SEQUENCE. Skipped if a previous attempt already did it.
+  if (lead.score === null) {
+    try {
+      const result = await scoreLead(lead, lead.experiment_group ?? "A");
+      Object.assign(updates, {
+        score: result.score,
+        score_reason: result.reason,
+        opener: result.opener,
+        sequence: result.sequence,
+      });
+      Object.assign(lead, updates);
+      await logEvent(id, "scored", { score: result.score, reason: result.reason });
+      await logEvent(id, "sequence_written", { steps: result.sequence.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await logEvent(id, "score_failed", { error: message, attempt: updates.attempts });
+      // Still route it, so a person sees it, but come back and score it later.
+      updates.status = "needs_review";
+    }
   }
-  try {
-    const sfId = await createSalesforceLead(finished);
-    const { data: synced } = await supabase
-      .from("leads")
-      .update({ sf_lead_id: sfId, status: "synced" })
-      .eq("id", lead.id)
-      .select()
-      .single();
-    await logEvent(lead.id, "synced", { sf_lead_id: sfId });
-    return { status: "created", lead: synced ?? finished };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Salesforce sync failed", lead.id, message);
-    await supabase.from("leads").update({ status: "sync_failed" }).eq("id", lead.id);
-    await logEvent(lead.id, "sync_failed", { error: message });
-    return { status: "created", lead: { ...finished, status: "sync_failed" } };
+
+  // ROUTE. route_lead() picks the eligible AE with the fewest leads and saves
+  // the owner in one locked transaction.
+  if (lead.owner === null) {
+    const eligible = eligibleAes(lead.score).map((ae) => ae.name);
+    const { data: routed, error } = await supabase.rpc("route_lead", { p_lead: id, p_eligible: eligible });
+    if (error) {
+      await save({ ...updates, status: "needs_review", last_error: `Routing failed: ${error.message}` });
+      return null;
+    }
+    const { owner, counts } = routed as { owner: string; counts: Record<string, number> };
+    updates.owner = owner;
+    updates.routing_reason = explainRouting(lead.score, owner, counts);
+    lead.owner = owner;
+    lead.routing_reason = updates.routing_reason;
+    await logEvent(id, "routed", { owner, reason: updates.routing_reason });
   }
+
+  if (updates.status === "needs_review") {
+    await save({ ...updates, last_error: "Scoring failed; will retry" });
+    return null;
+  }
+  updates.status = "routed";
+  await save({ ...updates, last_error: null });
+
+  // SALESFORCE.
+  if (!lead.sf_lead_id) {
+    if (!salesforceConfigured()) {
+      await logEvent(id, "salesforce_skipped", { reason: "Salesforce keys not set" });
+    } else {
+      try {
+        const sfId = await createSalesforceLead(lead);
+        lead.sf_lead_id = sfId;
+        await save({ sf_lead_id: sfId, status: "synced" });
+        await logEvent(id, "synced", { sf_lead_id: sfId });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await save({ status: "sync_failed", last_error: message });
+        await logEvent(id, "sync_failed", { error: message, attempt: updates.attempts });
+        return null;
+      }
+    }
+  }
+
+  // INSTANTLY. Only for leads with an email, and only when it's configured.
+  // A failure here is logged but doesn't block the lead: it's in Salesforce.
+  if (!lead.instantly_lead_id) {
+    if (!instantlyConfigured()) {
+      await logEvent(id, "instantly_skipped", { reason: "Instantly keys not set" });
+    } else if (!lead.email || !lead.sequence) {
+      await logEvent(id, "instantly_skipped", { reason: lead.email ? "No sequence" : "No email address" });
+    } else {
+      try {
+        const instantlyId = await addInstantlyLead({ ...lead, email: lead.email, sequence: lead.sequence });
+        await save({ instantly_lead_id: instantlyId });
+        await logEvent(id, "instantly_added", { instantly_lead_id: instantlyId });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await save({ last_error: message });
+        await logEvent(id, "instantly_failed", { error: message });
+      }
+    }
+  }
+
+  const { data: finished } = await supabase.from("leads").select().eq("id", id).maybeSingle<Lead>();
+  return finished;
+}
+
+/** Leads the worker should try again: stuck, failed, or never picked up. */
+export async function leadsNeedingWork(limit = 10): Promise<string[]> {
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  const { data, error } = await db()
+    .from("leads")
+    .select("id")
+    .in("status", ["queued", "needs_review", "sync_failed", "processing"])
+    .lt("attempts", MAX_ATTEMPTS)
+    // Give after() a head start, and don't retry something mid-flight.
+    .or(`last_attempt_at.is.null,last_attempt_at.lt.${twoMinutesAgo}`)
+    .lt("created_at", twoMinutesAgo)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`Couldn't read the queue: ${error.message}`);
+  return (data ?? []).map((r) => r.id as string);
 }

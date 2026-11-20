@@ -65,7 +65,9 @@ for (const lead of LEADS) {
   }
   ok++;
   const l = body.lead ?? {};
-  const tag = body.status === "duplicate" ? "(already there)" : "";
+  // v2 answers 202 "queued": scoring happens in the background, so the
+  // score and owner show up on /pipeline a few seconds later.
+  const tag = body.status === "duplicate" ? "(already there)" : body.status === "queued" ? "(queued)" : "";
   console.log(
     `✓ ${String(l.score ?? "--").padStart(3)}  ${l.experiment_group ?? "?"}  ${(l.owner ?? "").padEnd(13)} ${lead.name} @ ${lead.company} ${tag}`,
   );

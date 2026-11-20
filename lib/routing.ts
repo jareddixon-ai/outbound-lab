@@ -32,30 +32,38 @@ export type RoutingDecision = { owner: string; reason: string };
 
 const first = (name: string) => name.split(" ")[0];
 
-/**
- * @param score   Claude's fit score, or null if scoring failed
- * @param counts  how many leads each AE already owns
- */
-export function chooseOwner(score: number | null, counts: Record<string, number>): RoutingDecision {
+/** Which AEs may take a lead with this score. Hot leads: everyone. */
+export function eligibleAes(score: number | null): AE[] {
   const hot = score !== null && score >= HOT_SCORE;
-  const eligible = hot ? AES : AES.filter((ae) => !ae.senior);
+  return hot ? AES : AES.filter((ae) => !ae.senior);
+}
 
-  // Fewest leads wins. Ties go to whoever is listed first, and the senior
-  // AE is listed first, so she wins ties on hot leads.
-  const owner = eligible.reduce((best, ae) =>
-    (counts[ae.name] ?? 0) < (counts[best.name] ?? 0) ? ae : best,
-  );
-
+/** The plain-English reason, given who got it and the counts at the time. */
+export function explainRouting(score: number | null, owner: string, counts: Record<string, number>): string {
+  const eligible = eligibleAes(score);
   const load = eligible.map((ae) => `${first(ae.name)} ${counts[ae.name] ?? 0}`).join(", ");
   const why =
     score === null
       ? "No score (Claude step failed), so it goes to a non-senior AE for review."
-      : hot
+      : score >= HOT_SCORE
         ? `Score ${score} is ${HOT_SCORE} or more, so any AE can take it.`
         : `Score ${score} is under ${HOT_SCORE}, so it goes to a non-senior AE.`;
+  return `${why} ${first(owner)} had the fewest leads (${load}).`;
+}
 
-  return {
-    owner: owner.name,
-    reason: `${why} ${first(owner.name)} had the fewest leads (${load}).`,
-  };
+/**
+ * The whole decision in memory. v2 runs the "fewest leads" pick inside the
+ * database (route_lead in supabase/v2_schema.sql) so it's atomic, using the
+ * same rule; this version is what the tests check the rule against.
+ *
+ * @param score   Claude's fit score, or null if scoring failed
+ * @param counts  how many leads each AE already owns
+ */
+export function chooseOwner(score: number | null, counts: Record<string, number>): RoutingDecision {
+  // Fewest leads wins. Ties go to whoever is listed first, and the senior
+  // AE is listed first, so she wins ties on hot leads.
+  const owner = eligibleAes(score).reduce((best, ae) =>
+    (counts[ae.name] ?? 0) < (counts[best.name] ?? 0) ? ae : best,
+  );
+  return { owner: owner.name, reason: explainRouting(score, owner.name, counts) };
 }

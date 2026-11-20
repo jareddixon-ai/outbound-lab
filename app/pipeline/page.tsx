@@ -3,6 +3,7 @@
 // step, read from the events table. Click a lead to see its trail.
 
 import { useEffect, useState } from "react";
+import type { SequenceStep } from "@/lib/sequence";
 
 type Event = { type: string; detail: Record<string, unknown>; created_at: string };
 type Lead = {
@@ -18,6 +19,11 @@ type Lead = {
   experiment_group: string | null;
   status: string;
   sf_lead_id: string | null;
+  instantly_lead_id: string | null;
+  attempts: number;
+  sequence: SequenceStep[] | null;
+  replied: boolean;
+  reply_step: number | null;
   created_at: string;
   events: Event[];
 };
@@ -31,15 +37,22 @@ const STEP_LABEL: Record<string, string> = {
   synced: "Created in Salesforce",
   sync_failed: "Salesforce sync failed",
   salesforce_skipped: "Salesforce skipped",
-  replied: "Marked as replied",
+  replied: "Replied",
+  positive_reply: "Positive reply",
   reply_removed: "Reply removed",
+  sequence_written: "Sequence written",
+  instantly_added: "Added to Instantly",
+  instantly_skipped: "Instantly skipped",
+  instantly_failed: "Instantly hand-off failed",
 };
-const BAD = new Set(["score_failed", "sync_failed"]);
+const BAD = new Set(["score_failed", "sync_failed", "instantly_failed"]);
 
 const STATUS_STYLE: Record<string, string> = {
   synced: "bg-pass-bg text-pass",
   routed: "bg-unknown-bg text-unknown",
   needs_review: "bg-warn-bg text-warn",
+  queued: "bg-unknown-bg text-unknown",
+  processing: "bg-unknown-bg text-unknown",
   sync_failed: "bg-fail-bg text-fail",
 };
 
@@ -61,6 +74,13 @@ function describe(e: Event, lead: Lead): string {
       return `${d.owner}. ${d.reason ?? ""}`;
     case "synced":
       return `Salesforce Lead ${d.sf_lead_id}.`;
+    case "sequence_written":
+      return `${d.steps} emails, a different angle at each step.`;
+    case "instantly_added":
+      return `Instantly lead ${d.instantly_lead_id}. Sends when the campaign is on.`;
+    case "replied":
+    case "positive_reply":
+      return d.step ? `Replied to step ${d.step}${d.source === "instantly" ? ", recorded by Instantly" : ""}.` : "";
     default:
       return typeof d.error === "string" ? d.error : typeof d.reason === "string" ? d.reason : "";
   }
@@ -90,12 +110,13 @@ export default function Pipeline() {
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10 sm:px-6">
       <header className="flex flex-col gap-2">
-        <p className="text-sm font-medium text-accent">Outbound Lab · Part B</p>
+        <p className="text-sm font-medium text-accent">Outbound Lab v2 · Part B</p>
         <h1 className="text-3xl font-semibold tracking-tight text-balance">Lead pipeline</h1>
         <p className="max-w-2xl text-muted">
-          Leads arrive from Clay at <code className="rounded bg-unknown-bg px-1 text-sm">/api/leads</code>. Each one is
-          saved, scored by Claude, routed to an AE and created in Salesforce. Open a lead to see every step and the
-          reason behind it.
+          Leads arrive from Clay at <code className="rounded bg-unknown-bg px-1 text-sm">/api/leads</code>, which saves
+          each one and answers right away. In the background, Claude scores it and writes a 5-step sequence, it&apos;s
+          routed to an AE, created in Salesforce and handed to Instantly. Open a lead to see every step and the reason
+          behind it.
         </p>
       </header>
 
@@ -167,6 +188,24 @@ export default function Pipeline() {
                         ))}
                         {l.events.length === 0 && <li className="text-sm text-muted">No steps logged for this lead.</li>}
                       </ol>
+                    )}
+
+                    {isOpen && l.sequence && (
+                      <div className="flex flex-col gap-3 border-t border-border p-4">
+                        <h3 className="text-sm font-semibold">Follow-up sequence</h3>
+                        <ol className="flex flex-col gap-3">
+                          {l.sequence.map((s) => (
+                            <li key={s.step} className="flex flex-col gap-1 rounded-lg bg-background p-3">
+                              <span className="text-xs font-medium text-muted">
+                                Step {s.step} · day {s.day} · {s.angle}
+                                {l.reply_step === s.step && <span className="ml-2 text-pass">Got the reply</span>}
+                              </span>
+                              {s.subject && <span className="text-sm font-medium">Subject: {s.subject}</span>}
+                              <span className="text-sm leading-relaxed whitespace-pre-line">{s.body}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
                     )}
                   </li>
                 );

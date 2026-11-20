@@ -1,5 +1,6 @@
 // GET /api/pipeline: the latest leads, each with its step-by-step trail
-// from the events table. Read-only, so it needs no secret.
+// from the events table. Read-only, so it needs no secret. It never returns
+// email addresses: this endpoint is public.
 
 import { connection } from "next/server";
 import { db } from "@/lib/supabase";
@@ -10,7 +11,7 @@ export async function GET() {
   const { data, error } = await db()
     .from("leads")
     .select(
-      "id,name,title,company,source,score,score_reason,owner,routing_reason,experiment_group,status,sf_lead_id,created_at,events(type,detail,created_at)",
+      "id,name,title,company,source,score,score_reason,owner,routing_reason,experiment_group,status,attempts,sf_lead_id,instantly_lead_id,sequence,replied,reply_step,created_at,events(type,detail,created_at)",
     )
     .order("created_at", { ascending: false })
     .limit(25);

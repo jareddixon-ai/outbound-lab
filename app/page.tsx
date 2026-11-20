@@ -31,18 +31,29 @@ const PARTS = [
 ];
 
 const FLOW = [
-  ["Clay", "A row is sent to /api/leads with a shared secret"],
-  ["Supabase", "Saved, duplicates blocked, put in the smaller A/B group"],
-  ["Claude", "Scores fit 0–100 against the ideal customer and drafts an opener"],
+  ["Clay", "A row is sent to /api/leads, which saves it and answers in under a second"],
+  ["Claude", "In the background: scores fit 0–100 and writes a 5-step email sequence"],
   ["Routing", "80+ can go to any AE; the rest go to the AE with the fewest leads"],
   ["Salesforce", "Created as a Lead with score, opener, group and AE"],
+  ["Instantly", "Added to a campaign with its sequence; replies come back on their own"],
+];
+
+// What changed from v1, shown at the top so the two versions are easy to compare.
+const NEW_IN_V2 = [
+  ["Background scoring", "The API answers right away; Claude, routing and syncing run after the response, with a retry worker."],
+  ["Atomic group and AE pick", "Counting and saving happen in one locked database transaction, so two leads at once can't collide."],
+  ["Follow-up sequences", "Five emails per lead, each with its own angle: the A/B hook, the other hook, a free teardown, a category insight, a break-up."],
+  ["Instantly hand-off", "Leads with an email go into an Instantly campaign, and replies mark the lead automatically, with the step that got the reply."],
+  ["Tests and CI", "Unit tests for routing, stats, groups and sequences run on every push in GitHub Actions."],
 ];
 
 export default function Overview() {
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-12 px-4 py-12 sm:px-6 sm:py-16">
       <header className="flex max-w-3xl flex-col gap-4">
-        <p className="text-sm font-medium text-accent">A demo I built for Nectar Social&apos;s outbound problems</p>
+        <p className="text-sm font-medium text-accent">
+          Version 2 of a demo I built for Nectar Social&apos;s outbound problems
+        </p>
         <h1 className="text-4xl font-semibold tracking-tight text-balance sm:text-5xl">Outbound Lab</h1>
         <p className="text-lg leading-relaxed text-muted">
           Outbound breaks in three places: emails don&apos;t land, reps work the wrong leads, and nobody knows which
@@ -70,9 +81,23 @@ export default function Overview() {
         ))}
       </section>
 
+      <section aria-labelledby="new" className="flex flex-col gap-4">
+        <h2 id="new" className="text-xl font-semibold">
+          New in v2
+        </h2>
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {NEW_IN_V2.map(([name, what]) => (
+            <li key={name} className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4">
+              <span className="font-semibold">{name}</span>
+              <span className="text-sm leading-snug text-muted">{what}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <section aria-labelledby="flow" className="flex flex-col gap-4">
         <h2 id="flow" className="text-xl font-semibold">
-          One lead&apos;s trip, in about five seconds
+          One lead&apos;s trip
         </h2>
         <ol className="grid gap-3 sm:grid-cols-5">
           {FLOW.map(([where, what], i) => (
@@ -95,7 +120,7 @@ export default function Overview() {
             Decisions worth knowing
           </h2>
           <ul className="flex list-disc flex-col gap-2 pl-5 text-sm leading-relaxed text-muted">
-            <li>Nothing sends email. Openers are drafts for a rep to review.</li>
+            <li>Nothing sends until the Instantly campaign is switched on; the sequence is reviewable first.</li>
             <li>Claude is told never to invent facts about a company; a wrong &ldquo;fact&rdquo; costs more than a generic line.</li>
             <li>Routing was changed after testing: the first rule gave the senior AE 14 of 26 leads.</li>
             <li>The experiment won&apos;t name a winner under 30 leads per group or above p = 0.05.</li>
@@ -106,7 +131,8 @@ export default function Overview() {
           <h2 className="text-xl font-semibold">Built with</h2>
           <p className="text-sm leading-relaxed text-muted">
             Next.js on Vercel, Supabase (Postgres), the Claude API with structured JSON output, Salesforce REST API
-            with OAuth client credentials, and Clay&apos;s HTTP API column. Built with Claude Code.
+            with OAuth client credentials, Clay&apos;s HTTP API column and the Instantly API. Tested with Vitest in
+            GitHub Actions. Built with Claude Code.
           </p>
           <p className="text-sm text-muted">
             Contacts are made-up people at real brands, using public company information only.{" "}

@@ -12,6 +12,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { ICP } from "./icp";
+import { SEQUENCE_PLAN, buildSequence, otherGroup, type SequenceStep } from "./sequence";
 
 import type { Group } from "./experiment";
 export type { Group };
@@ -29,14 +30,24 @@ export type ScoreResult = {
   score: number;
   reason: string;
   opener: string;
+  sequence: SequenceStep[];
 };
 
-// The exact shape Claude must reply in.
+// The exact shape Claude must reply in. v2 adds the subject line and the
+// five email bodies of the sequence (see lib/sequence.ts for each step).
 const ScoreSchema = z.object({
   score: z.number().describe("Fit score from 0 (no fit) to 100 (perfect fit)."),
   reason: z.string().describe("One sentence, under 30 words, explaining the score."),
   opener: z.string().describe("One sentence, under 30 words: the first line of a cold email."),
+  subject: z.string().describe("Subject line for step 1: under 6 words, lowercase is fine, no clickbait."),
+  step1: z.string().describe("Step 1 email body, under 90 words. Starts with the opener sentence."),
+  step2: z.string().describe("Step 2 follow-up body, under 60 words."),
+  step3: z.string().describe("Step 3 follow-up body, under 60 words."),
+  step4: z.string().describe("Step 4 follow-up body, under 60 words."),
+  step5: z.string().describe("Step 5 follow-up body, under 40 words."),
 });
+
+const PLAN_TEXT = SEQUENCE_PLAN.map((p) => `Step ${p.step} (day ${p.day}, ${p.angle}): ${p.brief}`).join("\n");
 
 // The two opener styles we are A/B testing (Part C measures which one wins).
 const OPENER_STYLE: Record<Group, string> = {
@@ -57,13 +68,17 @@ Scoring guide: 80-100 strong fit on both company and person. 50-79 good
 company but a weaker role, or the reverse. 20-49 weak fit. 0-19 clearly not
 a fit.
 
-Rules for the opener:
+Rules for every email you write:
 - Write to the person directly, in plain, friendly words. No greeting, no
   "I hope this finds you well", no exclamation marks.
 - Never invent facts about the company: no made-up campaigns, numbers,
   launches or news. Only use what is in the lead data and general knowledge
   of the category.
-- Use the opener style you are given.`;
+- Use the opener style you are given for step 1, and the other style for step 2.
+- No sign-off or signature (the sending tool adds one) and no links.
+
+The sequence, one email per step:
+${PLAN_TEXT}`;
 
 let client: Anthropic | null = null;
 function anthropic() {
@@ -99,7 +114,7 @@ export async function scoreLead(lead: LeadForScoring, group: Group): Promise<Sco
     messages: [
       {
         role: "user",
-        content: `Opener style: ${OPENER_STYLE[group]}\n\nLead:\n${JSON.stringify(leadData, null, 2)}`,
+        content: `Opener style (step 1): ${OPENER_STYLE[group]}\n\nOther style (step 2): ${OPENER_STYLE[otherGroup(group)]}\n\nLead:\n${JSON.stringify(leadData, null, 2)}`,
       },
     ],
   });
@@ -117,5 +132,6 @@ export async function scoreLead(lead: LeadForScoring, group: Group): Promise<Sco
     score: Math.max(0, Math.min(100, Math.round(out.score))),
     reason: out.reason.trim(),
     opener: out.opener.trim(),
+    sequence: buildSequence(out.subject, [out.step1, out.step2, out.step3, out.step4, out.step5]),
   };
 }
