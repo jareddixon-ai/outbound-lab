@@ -17,7 +17,7 @@ const PARTS = [
     href: "/pipeline",
     name: "Lead Pipeline",
     problem: "Reps chasing the wrong leads",
-    what: "Clay sends each lead to an API. Claude scores its fit and drafts an opener, it's routed to an AE, and it lands in Salesforce.",
+    what: "Clay sends each lead to an API. In the background Claude scores it and writes a 5-step sequence, then it goes to an AE, Salesforce and Instantly.",
     cta: "Watch leads flow",
   },
   {
