@@ -238,7 +238,8 @@ export async function processLead(id: string): Promise<Lead | null> {
     await save({ ...updates, last_error: "Scoring failed; will retry" });
     return null;
   }
-  updates.status = "routed";
+  // Already in Salesforce (a re-score or a retry after syncing)? Stay "synced".
+  updates.status = lead.sf_lead_id ? "synced" : "routed";
   await save({ ...updates, last_error: null });
 
   // SALESFORCE.
