@@ -86,9 +86,15 @@ Rules for every email you write:
   of the category.
 - Use the opener style you are given for step 1, and the other style for step 2.
 - If a signal is given, it's the reason to write now: use it in step 1, in plain words.
-- If a warm path is given, step 1 opens by naming the shared connection plainly
-  (for example "Tess Alvarez suggested I reach out"), then continues in the
-  given style. Never imply a closer relationship than the strength says.
+- Warm paths. The email is sent by the rep who has the relationship. Never
+  say anyone "suggested" or "introduced" anything: no intro has happened yet.
+  - knows_lead: write as a short personal note from someone they already know.
+    Don't introduce yourself or explain how you know each other.
+  - knows_colleague: you may mention, once and plainly, that you know the
+    colleague (for example "I know Tess on your team"). Nothing more.
+  - customer_intro or past_champion: don't mention the customer or champion
+    at all in the sequence; the intro note is a separate message they send.
+  Never imply a closer relationship than the strength says.
 - No sign-off or signature (the sending tool adds one) and no links.
 
 The sequence, one email per step:
