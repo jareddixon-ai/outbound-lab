@@ -10,7 +10,8 @@ let client: SupabaseClient | null = null;
 export function db(): SupabaseClient {
   if (client) return client;
 
-  const url = process.env.SUPABASE_URL;
+  // Accept the URL with or without the "/rest/v1/" Supabase shows next to it.
+  const url = process.env.SUPABASE_URL?.trim().replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) {
     throw new Error(
