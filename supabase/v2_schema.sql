@@ -158,3 +158,15 @@ create unique index if not exists connections_unique
   on connections (lower(owner), lower(person_name), lower(company));
 create index if not exists connections_company_idx on connections (lower(company));
 alter table connections enable row level security;
+
+-- Let the server key (service_role) use these tables. Newer Supabase projects
+-- can be set not to grant this automatically to tables made in SQL, which
+-- shows up as "permission denied for table leads". The public keys (anon,
+-- authenticated) get nothing, and RLS stays on.
+grant usage on schema public to service_role;
+grant all on all tables in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+grant execute on function insert_lead(jsonb) to service_role;
+grant execute on function route_lead(uuid, text[]) to service_role;
+alter default privileges in schema public grant all on tables to service_role;
+alter default privileges in schema public grant all on sequences to service_role;
