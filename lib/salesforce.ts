@@ -93,8 +93,31 @@ function toSalesforceFields(lead: LeadForSalesforce) {
   };
 }
 
-/** Creates the Lead in Salesforce and returns its Salesforce ID. */
-export async function createSalesforceLead(lead: LeadForSalesforce): Promise<string> {
+/**
+ * When Salesforce's duplicate rule blocks a new Lead, its error lists the
+ * existing records it matched. Returns the first matching record's Id, or
+ * null when the error isn't a duplicate.
+ */
+export function duplicateMatchId(body: unknown): string | null {
+  if (!Array.isArray(body)) return null;
+  for (const e of body as { errorCode?: string; duplicateResult?: { matchResults?: { matchRecords?: { record?: { Id?: string } }[] }[] } }[]) {
+    if (e?.errorCode !== "DUPLICATES_DETECTED") continue;
+    for (const r of e.duplicateResult?.matchResults ?? []) {
+      const id = r.matchRecords?.find((m) => m.record?.Id)?.record?.Id;
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+export type SalesforceResult = { id: string; matched: boolean };
+
+/**
+ * Creates the Lead in Salesforce and returns its Id. v2: if Salesforce says
+ * this person already exists, link to that record instead of failing (and
+ * don't overwrite it), so a re-run never makes a second copy.
+ */
+export async function createSalesforceLead(lead: LeadForSalesforce): Promise<SalesforceResult> {
   const send = async (token: Token) =>
     fetch(`${token.instanceUrl}/services/data/${API_VERSION}/sobjects/Lead`, {
       method: "POST",
@@ -109,6 +132,8 @@ export async function createSalesforceLead(lead: LeadForSalesforce): Promise<str
   }
 
   const body = await res.json().catch(() => null);
+  const existing = res.ok ? null : duplicateMatchId(body);
+  if (existing) return { id: existing, matched: true };
   if (!res.ok || !body?.id) {
     // Salesforce returns a list of errors like [{message, errorCode, fields}].
     const detail = Array.isArray(body)
@@ -116,5 +141,5 @@ export async function createSalesforceLead(lead: LeadForSalesforce): Promise<str
       : JSON.stringify(body);
     throw new Error(`Salesforce rejected the Lead (${res.status}): ${detail}`);
   }
-  return body.id as string;
+  return { id: body.id as string, matched: false };
 }

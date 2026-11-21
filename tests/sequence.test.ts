@@ -48,3 +48,23 @@ describe("Instantly hand-off", () => {
     expect(vars).toMatchObject({ subject: "quick idea", step1: "one", step5: "five", experiment_group: "B" });
   });
 });
+
+import { duplicateMatchId } from "../lib/salesforce";
+
+describe("Salesforce duplicates", () => {
+  it("finds the existing record in a DUPLICATES_DETECTED error", () => {
+    const body = [
+      {
+        errorCode: "DUPLICATES_DETECTED",
+        message: "Use one of these records?",
+        duplicateResult: { matchResults: [{ matchRecords: [{ record: { Id: "00QXX0000012345" } }] }] },
+      },
+    ];
+    expect(duplicateMatchId(body)).toBe("00QXX0000012345");
+  });
+
+  it("returns null for any other error", () => {
+    expect(duplicateMatchId([{ errorCode: "REQUIRED_FIELD_MISSING", message: "x" }])).toBeNull();
+    expect(duplicateMatchId({ error: "x" })).toBeNull();
+  });
+});

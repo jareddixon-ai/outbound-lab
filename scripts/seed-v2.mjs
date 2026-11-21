@@ -6,6 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const base = process.argv[2] ?? "http://localhost:3000";
 const SECRET = process.env.LEADS_API_SECRET;
@@ -15,7 +16,7 @@ if (!SECRET) {
 }
 
 // 1. Connections first, so the warm paths exist when the leads arrive.
-execFileSync(process.execPath, [new URL("./seed-connections.mjs", import.meta.url).pathname, base], {
+execFileSync(process.execPath, [fileURLToPath(new URL("./seed-connections.mjs", import.meta.url)), base], {
   stdio: "inherit",
   env: process.env,
 });

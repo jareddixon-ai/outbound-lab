@@ -39,6 +39,7 @@ const STEP_LABEL: Record<string, string> = {
   score_failed: "Scoring failed",
   routed: "Routed to an AE",
   synced: "Created in Salesforce",
+  salesforce_matched: "Matched an existing Salesforce Lead",
   sync_failed: "Salesforce sync failed",
   salesforce_skipped: "Salesforce skipped",
   replied: "Replied",
@@ -80,6 +81,8 @@ function describe(e: Event, lead: Lead): string {
       return `${d.owner}. ${d.reason ?? ""}`;
     case "synced":
       return `Salesforce Lead ${d.sf_lead_id}.`;
+    case "salesforce_matched":
+      return `Already in Salesforce as ${d.sf_lead_id}; linked to it instead of making a copy.`;
     case "warm_path":
       return String(d.summary ?? "");
     case "paired":

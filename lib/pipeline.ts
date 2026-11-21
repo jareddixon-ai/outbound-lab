@@ -247,10 +247,10 @@ export async function processLead(id: string): Promise<Lead | null> {
       await logEvent(id, "salesforce_skipped", { reason: "Salesforce keys not set" });
     } else {
       try {
-        const sfId = await createSalesforceLead(lead);
-        lead.sf_lead_id = sfId;
-        await save({ sf_lead_id: sfId, status: "synced" });
-        await logEvent(id, "synced", { sf_lead_id: sfId });
+        const sf = await createSalesforceLead(lead);
+        lead.sf_lead_id = sf.id;
+        await save({ sf_lead_id: sf.id, status: "synced", last_error: null });
+        await logEvent(id, sf.matched ? "salesforce_matched" : "synced", { sf_lead_id: sf.id });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         await save({ status: "sync_failed", last_error: message });
