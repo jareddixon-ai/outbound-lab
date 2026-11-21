@@ -170,3 +170,10 @@ grant execute on function insert_lead(jsonb) to service_role;
 grant execute on function route_lead(uuid, text[]) to service_role;
 alter default privileges in schema public grant all on tables to service_role;
 alter default privileges in schema public grant all on sequences to service_role;
+
+-- Let the server's secret key (service_role) use these tables. Newer Supabase
+-- projects don't grant this automatically for tables made in the SQL Editor.
+-- The public key (anon) still gets nothing.
+grant usage on schema public to service_role;
+grant all on all tables in schema public to service_role;
+grant all on all sequences in schema public to service_role;
